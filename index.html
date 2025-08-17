@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ChatGPT Assistant (with Mock Mode)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Poppins', sans-serif; }
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      background: currentColor;
+      animation: blink 1s steps(2, start) infinite;
+      margin-left: 2px;
+      height: 1em;
+      vertical-align: middle;
+    }
+    @keyframes blink { to { visibility: hidden; } }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="max-w-3xl mx-auto px-4 py-10">
+    <div class="bg-white rounded-xl shadow-lg p-6">
+      <h1 class="text-2xl font-semibold mb-6">ChatGPT Assistant</h1>
+
+      <!-- Controls -->
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">API Key <span class="text-xs text-gray-500">(unused in Mock Mode)</span></label>
+          <input type="password" id="apiKey" class="w-full p-2 border rounded" placeholder="Enter your OpenAI API key">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Model</label>
+          <select id="model" class="w-full p-2 border rounded">
+            <option value="gpt-4o-mini" selected>gpt-4o-mini</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+        <label class="inline-flex items-center gap-2">
+          <input type="checkbox" id="mockMode" class="h-4 w-4" checked>
+          <span class="text-sm font-medium">Mock Mode (no real API calls)</span>
+        </label>
+
+        <div class="flex items-center gap-3 text-xs text-gray-600">
+          <label class="inline-flex items-center gap-2">
+            <span>Latency</span>
+            <input type="number" id="mockLatency" class="w-20 p-1 border rounded" value="600" min="0" step="100">
+            <span>ms</span>
+          </label>
+          <label class="inline-flex items-center gap-2">
+            <span>Typing speed</span>
+            <input type="number" id="typingMs" class="w-20 p-1 border rounded" value="8" min="0" step="2">
+            <span>ms/char</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Prompt -->
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Your Question</label>
+        <textarea id="question" class="w-full p-3 border rounded h-32" placeholder="Ask your question here..."></textarea>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex items-center gap-3 mb-6">
+        <button id="askBtn" class="bg-green-600 text-white px-5 py-2 rounded hover:bg-green-700">Ask</button>
+        <button id="clearBtn" class="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300">Clear</button>
+        <button id="examplesBtn" class="bg-blue-100 text-blue-800 px-3 py-2 rounded hover:bg-blue-200 text-sm">Insert Example</button>
+      </div>
+
+      <!-- Response -->
+      <div>
+        <h2 class="text-lg font-medium mb-2">Response</h2>
+        <div id="response" class="p-4 bg-gray-50 rounded min-h-[140px] whitespace-pre-wrap"></div>
+        <p class="text-xs text-gray-500 mt-3">
+          Tip: In production, keep your API key on a server and have this page call your <code>/api/chat</code> proxy.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const askBtn = document.getElementById('askBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const examplesBtn = document.getElementById('examplesBtn');
+
+    askBtn.addEventListener('click', askGPT);
+    clearBtn.addEventListener('click', () => {
+      document.getElementById('question').value = '';
+      setResponse('');
+    });
+    examplesBtn.addEventListener('click', () => {
+      document.getElementById('question').value =
+`Summarize this in 3 bullet points:
+- We launched a new feature this week.
+- Adoption grew by 28%.
+- Next sprint focuses on performance fixes.`;
+    });
+
+    function setResponse(text) {
+      const div = document.getElementById('response');
+      div.textContent = text;
+    }
+
+    function appendResponse(text) {
+      const div = document.getElementById('response');
+      div.textContent += text;
+    }
+
+    function sleep(ms) {
+      return new Promise(r => setTimeout(r, ms));
+    }
+
+    // --- Typing effect (for mock streaming) ---
+    async function typeOut(text, stepMs) {
+      const div = document.getElementById('response');
+      div.textContent = '';
+      for (let i = 0; i < text.length; i++) {
+        div.textContent += text[i];
+        if (stepMs > 0) await sleep(stepMs);
+      }
+    }
+
+    // --- Simple deterministic mock response generator ---
+    function mockGenerate(question) {
+      // A few patterns to make mock answers feel helpful
+      const q = question.trim();
+      if (!q) return "🤖 (Mock) Please enter a question.";
+
+      const lower = q.toLowerCase();
+
+      if (/translate|अनुवाद|hindi|हिंदी/.test(lower)) {
+        return "🤖 (Mock) Translation:\n“" + q + "” → “This is a mocked translation result for preview/testing.”";
+      }
+
+      if (/summarize|summary|bullets?/.test(lower)) {
+        return "🤖 (Mock) Summary:\n• Key point 1\n• Key point 2\n• Key point 3";
+      }
+
+      if (/code|javascript|html|css|react|node/.test(lower)) {
+        return `🤖 (Mock) Here's a sample code snippet:
+
+\`\`\`js
+function hello(name) {
+  return \`Hello, \${name}!\`;
+}
+console.log(hello("World"));
+\`\`\`
+
+Notes:
+1) This is a mock response (no API usage).
+2) Swap to real mode when your billing is active.`;
+      }
+
+      // Generic mock
+      return `🤖 (Mock) You asked: "${q}"
+
+Here's a realistic-looking answer for UI testing:
+- A short, direct answer line.
+- A couple of actionable bullet points.
+- A final tip for next steps.`;
+    }
+
+    async function askGPT() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const model = document.getElementById('model').value;
+      const question = document.getElementById('question').value.trim();
+      const responseDiv = document.getElementById('response');
+      const mockMode = document.getElementById('mockMode').checked;
+      const mockLatency = parseInt(document.getElementById('mockLatency').value || '0', 10);
+      const typingMs = parseInt(document.getElementById('typingMs').value || '0', 10);
+
+      // Basic validation
+      if (!question) {
+        setResponse('Please enter a question.');
+        return;
+      }
+
+      // MOCK MODE
+      if (mockMode) {
+        // optional latency to simulate network
+        setResponse('⏳ (Mock) Thinking...');
+        if (mockLatency > 0) await sleep(mockLatency);
+
+        const answer = mockGenerate(question);
+        if (typingMs > 0) {
+          await typeOut(answer, typingMs);
+        } else {
+          setResponse(answer);
+        }
+        return;
+      }
+
+      // REAL API MODE
+      if (!apiKey) {
+        setResponse('Please enter your API key or enable Mock Mode.');
+        return;
+      }
+
+      setResponse('Loading...');
+
+      try {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: question }]
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          const errMsg = data?.error?.message || `HTTP ${res.status} ${res.statusText}`;
+          setResponse(`API error: ${errMsg}`);
+          return;
+        }
+
+        const content = data?.choices?.[0]?.message?.content;
+        setResponse(content ?? 'No content returned.');
+      } catch (error) {
+        setResponse('Error: ' + error.message);
+      }
+    }
+  </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
